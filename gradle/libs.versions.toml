@@ -17,7 +17,7 @@ retrofit = "2.9.0"
 gson = "2.10.1"
 kotlinx-coroutines = "1.7.3"
 okhttp = "4.9.3" # Ou a versão mais recente
-work = "2.8.1"
+work = "2.10.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }

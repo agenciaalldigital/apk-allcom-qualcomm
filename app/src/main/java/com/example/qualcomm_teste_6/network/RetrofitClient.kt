@@ -8,6 +8,7 @@ import java.util.concurrent.TimeUnit
 
 object RetrofitClient {
     private const val BASE_URL = "https://api.allcomtelecom.com"
+//    https://api.allcomtelecom.com/api:Wf0orOZQ/allcomdevicesaware
 
     val instance: ApiService by lazy {
         // Configura o Interceptor para logs

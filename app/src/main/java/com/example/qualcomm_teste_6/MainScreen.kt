@@ -22,6 +22,7 @@ import com.skyhookwireless.wps.IWPS
 import com.skyhookwireless.wps.WPSContinuation
 import com.skyhookwireless.wps.WPSLocation
 import com.skyhookwireless.wps.WPSLocationCallback
+import com.skyhookwireless.wps.WPSPeriodicLocationCallback
 import com.skyhookwireless.wps.WPSReturnCode
 import com.skyhookwireless.wps.WPSStreetAddressLookup
 import kotlinx.coroutines.Dispatchers
@@ -140,30 +141,39 @@ fun MainScreen(xps: IWPS) {
 }
 
 private suspend fun determineLocation(xps: IWPS, callback: (String) -> Unit) {
+    println("chamando esse")
     xps.getLocation(
         null,
-        WPSStreetAddressLookup.WPS_NO_STREET_ADDRESS_LOOKUP,
+        WPSStreetAddressLookup.WPS_FULL_STREET_ADDRESS_LOOKUP,
         false,
         object : WPSLocationCallback {
             override fun handleWPSLocation(location: WPSLocation) {
+
+                val streetAddress = if(location.hasStreetAddress()){
+                    location.streetAddress
+                }else{
+                    null
+                }
+
+                println("velocidade: ${location.speed}")
+
                 val result = String.format(
                     Locale.ROOT,
                     "%.7f %.7f +/-%dm\n\n%s\n\n%s",
                     location.latitude,
                     location.longitude,
                     location.hpe,
-                    location.streetAddress,
-                    location.bearing,
-                    location.ip,
-                    location.extras,
-//                    if (location.hasTimeZone()) location.timeZone else "No timezone",
+                    streetAddress?.city ?: "Sem cidade",
+                    streetAddress?.region ?: "Sem regiao",
+                    streetAddress?.stateName ?: "Sem estado",
+                    streetAddress?.countryName ?: "Sem country name",
+
+
+                    if (location.hasTimeZone()) location.timeZone else "No timezone",
                     if (location.hasStreetAddress()) location.streetAddress else "No address"
                 )
-
-                println(result)
                 callback(result)
             }
-
 
             override fun done() {
                 // Handle completion if needed
