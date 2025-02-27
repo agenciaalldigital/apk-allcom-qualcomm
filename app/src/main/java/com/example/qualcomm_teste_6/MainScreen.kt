@@ -14,21 +14,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import com.example.qualcomm_teste_6.network.CreateRequestPostLocation
-import com.example.qualcomm_teste_6.network.RetrofitClient
 import com.example.qualcomm_teste_6.ui.theme.roxoAllcom
-import com.example.qualcomm_teste_6.ui.theme.warning
 import com.skyhookwireless.wps.IWPS
 import com.skyhookwireless.wps.WPSContinuation
 import com.skyhookwireless.wps.WPSLocation
 import com.skyhookwireless.wps.WPSLocationCallback
-import com.skyhookwireless.wps.WPSPeriodicLocationCallback
 import com.skyhookwireless.wps.WPSReturnCode
 import com.skyhookwireless.wps.WPSStreetAddressLookup
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -40,38 +35,6 @@ fun MainScreen(xps: IWPS) {
     var isPeriodicUpdateEnabled by remember { mutableStateOf(false) }
     var responseText by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
-
-    val apiService = RetrofitClient.instance
-    val request = CreateRequestPostLocation("-41.0202023091", "-12.123912309", "Brasil", "2025-02-20")
-
-    fun makePostRequest() {
-        scope.launch {
-            try {
-                responseText = "Fazendo requisição..." // Atualiza o texto para mostrar que a requisição está em andamento
-                val response = withContext(Dispatchers.IO) {
-                    apiService.createItem(request).execute()
-                }
-
-                if (response.isSuccessful) {
-                    val createdResponse = response.body()
-                    if(createdResponse != null){
-                        responseText = "Item criado com sucesso! ID: ${createdResponse.id}"
-                        Log.d("MainScreen", "Item criado com sucesso!")
-                    }else{
-                        responseText = "ITEM CRIADO: Sem resposta após a criação"
-                        Log.e("MainScreen", "Resposta inválida do servidor")
-                    }
-                } else {
-                    val errorBody = response.errorBody()?.string()
-                    responseText = "Falha ao criar item: $errorBody"
-                    Log.e("MainScreen", "Falha ao criar item: $errorBody")
-                }
-            } catch (e: Exception) {
-                responseText = "Erro na requisição: ${e}"
-                Log.e("MainScreen", "Erro na requisição: ${e.message}", e)
-            }
-        }
-    }
 
     LaunchedEffect(isPeriodicUpdateEnabled) {
         while (isPeriodicUpdateEnabled) {

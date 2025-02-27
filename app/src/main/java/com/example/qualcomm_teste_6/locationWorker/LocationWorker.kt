@@ -1,7 +1,21 @@
-package com.example.qualcomm_teste_6
+package com.example.qualcomm_teste_6.locationWorker
 
+import android.annotation.SuppressLint
 import android.content.Context
+import android.os.Build
+import android.telephony.CellInfoCdma
+import android.telephony.CellInfoGsm
+import android.telephony.CellInfoLte
+import android.telephony.CellInfoNr
+import android.telephony.CellInfoWcdma
+import android.telephony.TelephonyManager
 import android.util.Log
+import androidx.annotation.RequiresApi
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import com.skyhookwireless.wps.IWPS
@@ -10,92 +24,155 @@ import com.skyhookwireless.wps.WPSLocation
 import com.skyhookwireless.wps.WPSLocationCallback
 import com.skyhookwireless.wps.WPSReturnCode
 import com.skyhookwireless.wps.WPSStreetAddressLookup
-import com.skyhookwireless.wps.XPS
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import com.example.qualcomm_teste_6.network.RetrofitClient
 import com.example.qualcomm_teste_6.network.CreateRequestPostLocation
+import com.example.qualcomm_teste_6.utils.DeviceInfoUtils
+import com.example.qualcomm_teste_6.utils.PreferencesUtils
+import com.example.qualcomm_teste_6.utils.XpsSingleton
+import com.skyhookwireless.wps.WPSPeriodicLocationCallback
 
 class LocationWorker(
     context: Context,
     workerParams: WorkerParameters
 ) : Worker(context, workerParams) {
 
-    private lateinit var xps: IWPS
+
+    private val utils = DeviceInfoUtils
+    private val utilsPrerence = PreferencesUtils
 
     override fun doWork(): Result {
-        xps = XPS(applicationContext)
+        val xps = XpsSingleton.getXps()
+
         try {
             xps.setKey("eJwNwcENACEIBMC3xZC4KiJfxG3qcr3rDArqA-iy8lEj1A-lOU0MJ2Vwh3hfiZGT8PZfGIILYA")
+            xps.setTunable("ObservabilityEnabled", true)
+
         } catch (e: IllegalArgumentException) {
             Log.e("LocationWorker", "Erro ao configurar a chave: ${e.message}")
             return Result.failure()
         }
 
-        // Obtém a localização
         determineLocation(xps)
 
         return Result.success()
     }
 
     private fun determineLocation(xps: IWPS) {
+        val batteryPercentage = utils.getBatteryPercentage(applicationContext)
+        val wifiSignalStrength = utils.getWifiSignalStrength(applicationContext)
+        val imei = utils.getDeviceId(applicationContext) // Obtém o IMEI
+        val manufacturer = utils.getDeviceManufacturer() // Obtém a marca
+        val model = utils.getDeviceModel()
+        val mobileSignalStrength = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            getMobileSignalStrength(applicationContext)
+        } else {
+            TODO("VERSION.SDK_INT < Q")
+        }
 
-        xps.getLocation(
+        var ipPublic = utils.getIpPublic()
+
+        Log.e("INICIO", "ANTES BREAKING POINT")
+        xps.getPeriodicLocation(
             null,
-            WPSStreetAddressLookup.WPS_FULL_STREET_ADDRESS_LOOKUP,
+            WPSStreetAddressLookup.WPS_FULL_STREET_ADDRESS_LOOKUP, // streetAddressLookup
             false,
-            object : WPSLocationCallback {
-                override fun handleWPSLocation(location: WPSLocation) {
-                    // Extrai os dados da localização
+            60000L, // period: 60 segundos (60000 ms) entre as atualizações
+            0,
+            object : WPSPeriodicLocationCallback {
+                override fun handleWPSPeriodicLocation(location: WPSLocation): WPSContinuation {
+
                     val latitude = location.latitude
                     val longitude = location.longitude
                     val precision = location.hpe
                     val country = location.streetAddress.toString() ?: "Brasil"
                     val timestamp = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+                    val ip = location.ip ?: "Sem Ip da location"
 
-                    println("latitude")
-                    println(latitude)
+                    Log.d("DADOS", location.toString())
 
                     // Salva o resultado e a hora da última busca
-                    saveLocationResult("Latitude: $latitude, Longitude: $longitude, Precisão: $precision, País: $country")
-                    saveLastUpdateTime()
+                    utilsPrerence.saveLocationResult(
+                        applicationContext,
+                        "Latitude: $latitude, " +
+                                "Longitude: $longitude, " +
+                                "Precisão: $precision, " +
+                                "País: $country, " +
+                                "Bateria: $batteryPercentage%" +
+                                "Wi-fi: $wifiSignalStrength dBm" +
+                                "Móvel: $mobileSignalStrength dBm" +
+                                "IMEI: $imei," +
+                                "Marca: $manufacturer," +
+                                "Modelo: $model," +
+                                "Ip Location: $ip"
+                    )
+                    utilsPrerence.saveLastUpdateTime(applicationContext)
 
-                    // Faz a requisição POST
-                    makePostRequest(latitude.toString(), longitude.toString(), country, timestamp)
+                    makePostRequest(
+                        latitude.toString(),
+                        longitude.toString(),
+                        country,
+                        timestamp,
+                        batteryPercentage,
+                        imei.toString(),
+                        manufacturer,
+                        model,
+                        ipAddress = utils.getIPAddress(applicationContext)!!,
+                        ipPublicAddress =  ipPublic.toString()
+                    )
+
+                    // Retorna WPS_CONTINUE para continuar as atualizações
+                    return WPSContinuation.WPS_CONTINUE
                 }
 
                 override fun done() {
-                    // Handle completion if needed
+                    // Chamado quando todas as iterações são concluídas
+                    Log.d("LocationWorker", "Atualizações de localização concluídas.")
                 }
 
                 override fun handleError(returnCode: WPSReturnCode): WPSContinuation {
                     Log.e("LocationWorker", "Erro na localização: $returnCode")
-                    return WPSContinuation.WPS_CONTINUE
+                    return WPSContinuation.WPS_CONTINUE // Continua as atualizações
                 }
             }
         )
+
+        Log.e("FIM", "DEPOIS BREAKING POINT")
+
     }
 
-    private fun saveLocationResult(result: String) {
-        val sharedPref = applicationContext.getSharedPreferences("LocationPrefs", Context.MODE_PRIVATE)
-        with(sharedPref.edit()) {
-            putString("lastLocationResult", result)
-            apply()
+
+    @SuppressLint("MissingPermission")
+    @RequiresApi(Build.VERSION_CODES.Q)
+    private fun getMobileSignalStrength(context: Context): Int {
+        val telephonyManager = context.applicationContext.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+        val cellInfo = telephonyManager.allCellInfo
+        var signalStrength = -1
+
+        if (cellInfo != null) {
+            for (info in cellInfo) {
+                if (info.isRegistered) {
+                    when (info) {
+                        is CellInfoGsm -> signalStrength = info.cellSignalStrength.dbm
+                        is CellInfoCdma -> signalStrength = info.cellSignalStrength.dbm
+                        is CellInfoLte -> signalStrength = info.cellSignalStrength.dbm
+                        is CellInfoWcdma -> signalStrength = info.cellSignalStrength.dbm
+                        is CellInfoNr -> signalStrength = info.cellSignalStrength.dbm
+                    }
+                    break
+                }
+            }
         }
+
+        return signalStrength
     }
 
-    private fun saveLastUpdateTime() {
-        val sharedPref = applicationContext.getSharedPreferences("LocationPrefs", Context.MODE_PRIVATE)
-        with(sharedPref.edit()) {
-            putString("lastUpdateTime", SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date()))
-            apply()
-        }
-    }
 
-    private fun makePostRequest(lat: String, long: String, country: String, data: String) {
+    private fun makePostRequest(lat: String, long: String, country: String, data: String, batery: Int, imei: String, brand: String, model: String, ipAddress: String, ipPublicAddress: String) {
         val apiService = RetrofitClient.instance
-        val request = CreateRequestPostLocation(lat, long, country, data)
+        val request = CreateRequestPostLocation(lat, long, country, data, batery, imei, brand, model, ipAddress, ipPublicAddress)
 
         Thread {
             try {
