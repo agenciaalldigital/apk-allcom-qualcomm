@@ -63,6 +63,7 @@ object DeviceInfoUtils {
 
         return if (capabilities != null) {
             when {
+
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> {
                     val wifiManager =
                         context.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
@@ -76,6 +77,7 @@ object DeviceInfoUtils {
                         ipAddress shr 24 and 0xff
                     )
                 }
+
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> {
                     // Obter IP para dados móveis
                     try {

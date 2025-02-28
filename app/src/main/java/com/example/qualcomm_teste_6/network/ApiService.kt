@@ -10,6 +10,7 @@ interface ApiService {
         "accept: application/json",
         "Content-Type: application/json"
     )
-    @POST("/api:Wf0orOZQ/allcomdevicesaware") // Endpoint raiz
+
+    @POST("/api:Wf0orOZQ/allcomdevicesaware")
     fun createItem(@Body request: CreateRequestPostLocation): Call<CreateRequestResponse>
 }

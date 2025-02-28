@@ -11,11 +11,6 @@ import android.telephony.CellInfoWcdma
 import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.annotation.RequiresApi
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.work.Worker
 import androidx.work.WorkerParameters
 import com.skyhookwireless.wps.IWPS
@@ -39,16 +34,17 @@ class LocationWorker(
     workerParams: WorkerParameters
 ) : Worker(context, workerParams) {
 
-
+    val xps = XpsSingleton.getXps()
     private val utils = DeviceInfoUtils
     private val utilsPrerence = PreferencesUtils
 
     override fun doWork(): Result {
-        val xps = XpsSingleton.getXps()
 
         try {
+            xps.setTunable("LogEnabled", true)
             xps.setKey("eJwNwcENACEIBMC3xZC4KiJfxG3qcr3rDArqA-iy8lEj1A-lOU0MJ2Vwh3hfiZGT8PZfGIILYA")
             xps.setTunable("ObservabilityEnabled", true)
+            xps.setTunable("RemoteCacheMaxSize", true)
 
         } catch (e: IllegalArgumentException) {
             Log.e("LocationWorker", "Erro ao configurar a chave: ${e.message}")
@@ -79,7 +75,7 @@ class LocationWorker(
             null,
             WPSStreetAddressLookup.WPS_FULL_STREET_ADDRESS_LOOKUP, // streetAddressLookup
             false,
-            60000L, // period: 60 segundos (60000 ms) entre as atualizações
+            10000L,
             0,
             object : WPSPeriodicLocationCallback {
                 override fun handleWPSPeriodicLocation(location: WPSLocation): WPSContinuation {
