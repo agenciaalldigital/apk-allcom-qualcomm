@@ -29,35 +29,26 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.ActivityCompat
-import androidx.work.Constraints
-import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequest
-import androidx.work.PeriodicWorkRequest
-import androidx.work.WorkManager
-import com.example.qualcomm_teste_6.locationWorker.LocationWorker
-import com.example.qualcomm_teste_6.ui.theme.QUALCOMMTESTE6Theme
-import com.example.qualcomm_teste_6.utils.DeviceInfoUtils
-import com.skyhookwireless.wps.WPS
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.concurrent.TimeUnit
-import android.provider.Settings
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.text.style.TextAlign
-import androidx.work.WorkInfo
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import com.example.qualcomm_teste_6.service.LocationForegroundService
+import com.example.qualcomm_teste_6.ui.theme.QUALCOMMTESTE6Theme
+import com.example.qualcomm_teste_6.utils.DeviceInfoUtils
 import com.example.qualcomm_teste_6.utils.XpsSingleton
 import kotlinx.coroutines.*
+import android.provider.Settings
+import androidx.core.content.ContextCompat
+import java.text.SimpleDateFormat
+import java.util.*
 
 class MainActivity : ComponentActivity() {
     private val PERMISSION_REQUEST_CODE = 123
     private val utils = DeviceInfoUtils
-
 
     private var loadingJob: Job? = null
     private var lastLocationResult by mutableStateOf("Nenhum resultado ainda.")
@@ -81,16 +72,20 @@ class MainActivity : ComponentActivity() {
         }
 
     private fun requestPermissions() {
-        val permissionsToRequest = arrayOf(
+        val permissionsToRequest = mutableListOf(
             Manifest.permission.READ_PHONE_STATE,
             Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.BATTERY_STATS
-        ).filter {
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.FOREGROUND_SERVICE,
+            Manifest.permission.FOREGROUND_SERVICE_LOCATION
+        )
+
+        val permissionsToRequestArray = permissionsToRequest.filter {
             ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }.toTypedArray()
 
-        if (permissionsToRequest.isNotEmpty()) {
-            requestMultiplePermissionsLauncher.launch(permissionsToRequest)
+        if (permissionsToRequestArray.isNotEmpty()) {
+            requestMultiplePermissionsLauncher.launch(permissionsToRequestArray)
         } else {
             // Se já temos todas as permissões, atualiza as informações
             updateDeviceInfo()
@@ -116,25 +111,12 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-
     private val updateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             readLocationResult() // Atualiza os dados na tela
             isLoading = false // Desativa o estado de loading
         }
     }
-
-    private fun requestPhonePermissions() {
-        ActivityCompat.requestPermissions(
-            this,
-            arrayOf(
-                Manifest.permission.READ_PHONE_STATE
-            ),
-            PERMISSION_REQUEST_CODE
-        )
-    }
-
-
 
     @SuppressLint("UnspecifiedRegisterReceiverFlag")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -160,6 +142,7 @@ class MainActivity : ComponentActivity() {
             )
         }
 
+        // Registrar o receiver para atualizações de localização
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             registerReceiver(
                 updateReceiver,
@@ -173,8 +156,15 @@ class MainActivity : ComponentActivity() {
             )
         }
 
-        scheduleLocationWorker()
+        // Registrar também com LocalBroadcastManager
+        LocalBroadcastManager.getInstance(this).registerReceiver(
+            updateReceiver,
+            IntentFilter("com.example.qualcomm_teste_6.LOCATION_UPDATE")
+        )
 
+        startLocationService()
+
+        // Força uma atualização inicial
         forceLocationUpdate()
 
         setContent {
@@ -202,7 +192,6 @@ class MainActivity : ComponentActivity() {
                             onRefreshCache = { readLocationResult() }
                         )
                     }
-
                 }
             }
         }
@@ -210,31 +199,40 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        unregisterReceiver(updateReceiver)
+        try {
+            unregisterReceiver(updateReceiver)
+            LocalBroadcastManager.getInstance(this).unregisterReceiver(updateReceiver)
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Erro ao desregistrar receiver: ${e.message}")
+        }
         XpsSingleton.abortXps()
     }
 
-    private fun scheduleLocationWorker() {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-
-        val workRequest = PeriodicWorkRequest.Builder(
-            LocationWorker::class.java,
-            1,
-            TimeUnit.HOURS
-        ).setConstraints(constraints)
-            .build()
-
-        WorkManager.getInstance(this).enqueueUniquePeriodicWork(
-            "LocationWork",
-            ExistingPeriodicWorkPolicy.REPLACE,
-            workRequest
+    private fun startLocationService() {
+        val requiredPermissions = arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.FOREGROUND_SERVICE_LOCATION
         )
+
+        val hasAllPermissions = requiredPermissions.all {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
+        }
+
+        if (hasAllPermissions) {
+            val serviceIntent = Intent(this, LocationForegroundService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ContextCompat.startForegroundService(this, serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+            Log.d("MainActivity", "Serviço de localização iniciado")
+        } else {
+            Log.e("MainActivity", "Permissões necessárias não concedidas.")
+            requestPermissions() // Solicita as permissões novamente
+        }
     }
 
     private fun forceLocationUpdate() {
-
         isLoading = true
 
         loadingJob = CoroutineScope(Dispatchers.Main).launch {
@@ -242,20 +240,21 @@ class MainActivity : ComponentActivity() {
             isLoading = false
         }
 
-        val workRequest = OneTimeWorkRequest.Builder(LocationWorker::class.java).build()
-        WorkManager.getInstance(this).enqueue(workRequest)
+        // Envia um comando para o serviço forçar uma atualização
+        val serviceIntent = Intent(this, LocationForegroundService::class.java).apply {
+            action = "FORCE_UPDATE"
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            ContextCompat.startForegroundService(this, serviceIntent)
+        } else {
+            startService(serviceIntent)
+        }
 
-        WorkManager.getInstance(this)
-            .getWorkInfoByIdLiveData(workRequest.id)
-            .observe(this) { workInfo ->
-                when (workInfo?.state) {
-                    WorkInfo.State.SUCCEEDED, WorkInfo.State.FAILED, WorkInfo.State.CANCELLED -> {
-                        readLocationResult() // Atualiza os dados na tela
-                    }
-                    else -> {
-                    }
-                }
-            }
+        // Lê os resultados após um pequeno delay
+        CoroutineScope(Dispatchers.Main).launch {
+            delay(2000)
+            readLocationResult()
+        }
     }
 
     private fun readLocationResult() {
@@ -264,36 +263,46 @@ class MainActivity : ComponentActivity() {
         lastUpdateTime = sharedPref.getString("lastUpdateTime", "Nenhuma busca realizada.") ?: "Nenhuma busca realizada."
 
         val result = lastLocationResult
-        val batery = result.substringAfter("Bateria: ").substringBefore("%")
-        val wifiSignal = result.substringAfter("Wi-Fi: ").substringBefore("dBm")
-        val mobileSignal = result.substringAfter("Móvel: ").substringBefore("dBm")
-        val imei = result.substringAfter("IMEI: ").substringBefore(",")
-        val mcarca = result.substringAfter("Marca: ").substringBefore(",")
-        val modelo = result.substringAfter("Modelo: ").substringBefore(",")
-        val ipLocation = result.substringAfter("Ip Location: ").substringBefore("")
 
-        Log.e("imei", imei)
+        try {
+            if (result.contains("Bateria:")) {
+                val batery = result.substringAfter("Bateria: ").substringBefore("%")
+                batteryPercentage = batery
+            }
 
-        wifiSignalStrength = wifiSignal
-        mobileSignalStrength = mobileSignal
-        batteryPercentage = batery
-        imeiDevide = imei
-        brandDevice = mcarca
-        modelDevice = modelo
-        ipLocalidade = ipLocation
+            if (result.contains("Wi-fi:")) {
+                val wifiSignal = result.substringAfter("Wi-fi: ").substringBefore("dBm")
+                wifiSignalStrength = wifiSignal
+            }
+
+            if (result.contains("Móvel:")) {
+                val mobileSignal = result.substringAfter("Móvel: ").substringBefore("dBm")
+                mobileSignalStrength = mobileSignal
+            }
+
+            if (result.contains("IMEI:")) {
+                val imei = result.substringAfter("IMEI: ").substringBefore(",")
+                imeiDevide = imei
+            }
+
+            if (result.contains("Marca:")) {
+                val mcarca = result.substringAfter("Marca: ").substringBefore(",")
+                brandDevice = mcarca
+            }
+
+            if (result.contains("Modelo:")) {
+                val modelo = result.substringAfter("Modelo: ").substringBefore(",")
+                modelDevice = modelo
+            }
+
+            if (result.contains("Ip Location:")) {
+                val ipLocation = result.substringAfter("Ip Location: ").substringBefore("")
+                ipLocalidade = ipLocation
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Erro ao processar resultado: ${e.message}")
+        }
     }
-
-    private fun getBatteryPercentage(): Int {
-        val batteryManager = getSystemService(Context.BATTERY_SERVICE) as BatteryManager
-        return batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-    }
-
-    private fun getWifiSignalStrength(context: Context): Int {
-        val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-        val wifiInfo = wifiManager.connectionInfo
-        return wifiInfo.rssi
-    }
-
 }
 
 @Composable
@@ -315,6 +324,12 @@ fun LocationScreen(
 
     val scrollState = rememberScrollState()
 
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1000)
+            onRefreshCache()
+        }
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -438,3 +453,5 @@ fun LocationScreen(
         }
     }
 }
+
+
